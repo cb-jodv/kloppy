@@ -1,5 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+import json
 from pathlib import Path
 from typing import cast
 
@@ -46,7 +48,7 @@ from kloppy.domain.models.event import (
     PassType,
     UnderPressureQualifier,
 )
-from kloppy.exceptions import DeserializationError
+from kloppy.exceptions import DeserializationError, DeserializationWarning
 from kloppy.infra.serializers.event.statsbomb.helpers import parse_str_ts
 import kloppy.infra.serializers.event.statsbomb.specification as SB
 
@@ -687,6 +689,41 @@ class TestStatsBombPassEvent:
         assert pass_event.get_qualifier_value(SetPieceQualifier) is None
         # A pass can have pass qualifiers
         assert pass_event.get_qualifier_value(PassQualifier) is None
+
+    @pytest.mark.parametrize(
+        "outcome", [None, {"id": 75, "name": "Out"}], ids=["no_outcome", "out"]
+    )
+    def test_null_end_location(self, base_dir: Path, outcome):
+        """It should deserialize a pass with a [null, null] end location"""
+        with open(base_dir / "files" / "statsbomb_event.json") as f:
+            events = json.load(f)
+        raw_pass = next(
+            e
+            for e in events
+            if e["type"]["id"] == 30 and "outcome" not in e["pass"]
+        )
+        raw_pass["pass"]["end_location"] = [None, None]
+        del raw_pass["pass"]["recipient"]
+        if outcome:
+            raw_pass["pass"]["outcome"] = outcome
+
+        with pytest.warns(DeserializationWarning, match="has no end location"):
+            dataset = statsbomb.load(
+                event_data=BytesIO(json.dumps(events).encode()),
+                lineup_data=base_dir / "files" / "statsbomb_lineup.json",
+            )
+
+        pass_event = dataset.get_event_by_id(raw_pass["id"])
+        assert pass_event.receiver_coordinates is None
+        assert pass_event.receiver_player is None
+        # No outcome and no recipient: whether it was completed is unknown
+        assert pass_event.result == (PassResult.OUT if outcome else None)
+        # There is no location to create a synthetic ball out event at
+        assert dataset.get_event_by_id(f"out-{raw_pass['id']}") is None
+        dataset.transform(
+            to_orientation=Orientation.HOME_AWAY,
+            to_coordinate_system=Provider.TRACAB,
+        ).to_df("*")
 
     def test_pass_qualifiers(self, dataset: EventDataset):
         """It should add pass qualifiers"""
