@@ -691,9 +691,15 @@ class TestStatsBombPassEvent:
         assert pass_event.get_qualifier_value(PassQualifier) is None
 
     @pytest.mark.parametrize(
-        "outcome", [None, {"id": 75, "name": "Out"}], ids=["no_outcome", "out"]
+        ("outcome", "expected_result"),
+        [
+            # No outcome and no recipient: whether it was completed is unknown
+            (None, None),
+            ({"id": 75, "name": "Out"}, PassResult.OUT),
+        ],
+        ids=["no_outcome", "out"],
     )
-    def test_null_end_location(self, base_dir: Path, outcome):
+    def test_null_end_location(self, base_dir: Path, outcome, expected_result):
         """It should deserialize a pass with a [null, null] end location"""
         with open(base_dir / "files" / "statsbomb_event.json") as f:
             events = json.load(f)
@@ -716,8 +722,7 @@ class TestStatsBombPassEvent:
         pass_event = dataset.get_event_by_id(raw_pass["id"])
         assert pass_event.receiver_coordinates is None
         assert pass_event.receiver_player is None
-        # No outcome and no recipient: whether it was completed is unknown
-        assert pass_event.result == (PassResult.OUT if outcome else None)
+        assert pass_event.result == expected_result
         # There is no location to create a synthetic ball out event at
         assert dataset.get_event_by_id(f"out-{raw_pass['id']}") is None
         dataset.transform(
